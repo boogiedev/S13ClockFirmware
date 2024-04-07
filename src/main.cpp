@@ -27,7 +27,8 @@
 #define DEBUG_MODE false
 
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
-GFXcanvas1 canvas(SCREEN_WIDTH, SCREEN_HEIGHT);
+GFXcanvas1 bootCanvas(SCREEN_WIDTH, SCREEN_HEIGHT);
+GFXcanvas1 digitalClockCanvas(SCREEN_WIDTH, SCREEN_HEIGHT);
 
 
 //Silvia LOGO
@@ -240,8 +241,8 @@ int mins=0;
 int secs=0;
 
 // Clock Display Flags
-bool showAnalogClock = false;
-bool showDigitalCLock = true;
+bool showAnalogClock = true;
+bool showDigitalCLock = false;
 
 const int NUM_POINTS = 60;
 const int RADIUS = 28;
@@ -279,7 +280,13 @@ void setup() {
 
   if (!DEBUG_MODE) {
     bootScreen();
+    display.clearDisplay();
+    display.display();
+    delay(1000);
     silviaScreen();
+    display.clearDisplay();
+    display.display();
+    delay(1000);
   }
 
   // Setup Clock
@@ -296,7 +303,6 @@ void setup() {
 }
 
 void loop() {
-  display.clearDisplay();
 
   // Clock Display Logic
   if (showAnalogClock) {
@@ -354,35 +360,38 @@ void loop() {
 
   initiateTime();
   display.display();
+  display.clearDisplay();
 }
 
 
 void silviaScreen() {
-  display.clearDisplay();
   display.clearDisplay(); // Always Clear display buffer
-  display.drawBitmap(0, 0, SILVIALOGO, 128, 64, 1);
+  bootCanvas.fillScreen(0);
+  bootCanvas.drawBitmap(0, 0, SILVIALOGO, 128, 64, WHITE, BLACK);
+  display.drawBitmap(0, 0, bootCanvas.getBuffer(), SCREEN_WIDTH, SCREEN_HEIGHT, WHITE, BLACK);
   display.display();
-  delay(2000);
+  delay(3000);
 }
 
 void bootScreen() {
   // 128x64 C187 Display Screen
   display.clearDisplay(); // Always Clear display buffer
-  canvas.drawBitmap(0, 0, CLUB187LOGOARRAY, 60, 61, WHITE, BLACK);
-  canvas.setTextSize(1);
-  canvas.setFont(&RONIX4);
-  canvas.setTextColor(WHITE);
-  canvas.setCursor(59, 20);
-  canvas.println("DIGITAL");
-  canvas.setCursor(59, 30);
-  canvas.println("CLOCK");
-  canvas.setFont(NULL);
-  canvas.setCursor(59, 43);
-  canvas.println("CLUB 187");
-  canvas.setCursor(66, 52);
-  canvas.println("V:0.02");
+  bootCanvas.fillScreen(0);
+  bootCanvas.drawBitmap(0, 0, CLUB187LOGOARRAY, 60, 61, WHITE, BLACK);
+  bootCanvas.setTextSize(1);
+  bootCanvas.setFont(&RONIX4);
+  bootCanvas.setTextColor(WHITE);
+  bootCanvas.setCursor(59, 20);
+  bootCanvas.println("DIGITAL");
+  bootCanvas.setCursor(59, 30);
+  bootCanvas.println("CLOCK");
+  bootCanvas.setFont(NULL);
+  bootCanvas.setCursor(59, 43);
+  bootCanvas.println("CLUB 187");
+  bootCanvas.setCursor(66, 52);
+  bootCanvas.println("V:0.02");
 
-  display.drawBitmap(0, 0, canvas.getBuffer(), canvas.width(), canvas.height(), WHITE, BLACK);
+  display.drawBitmap(0, 0, bootCanvas.getBuffer(), SCREEN_WIDTH, SCREEN_HEIGHT, WHITE, BLACK);
   display.display();
   delay(2000);
 
@@ -520,113 +529,102 @@ void drawAnalogBoldHand(int hand_angle, int hand_length_long, int hand_legth_sho
 void displayDigitalClock(bool edit_minute, bool edit_hour) {
   unsigned long millis = rtc.getMillis();
   int clockY = 42;
-  canvas.fillScreen(0); 
-  canvas.setFont(&RONIX17);
-  canvas.setTextSize(1);
-  canvas.setTextWrap(false);
+  digitalClockCanvas.fillScreen(0); 
+  digitalClockCanvas.setFont(&RONIX17);
+  digitalClockCanvas.setTextSize(1);
+  digitalClockCanvas.setTextWrap(false);
+  if (edit_hour) {
+    if (millis > 500) {
+      if (hrs > 9) {
+        digitalClockCanvas.setCursor(0, clockY);
+        digitalClockCanvas.print(hrs / 10);
+      }
+      if (hrs % 10 == 1) {
+        digitalClockCanvas.setCursor(25, clockY);
+        digitalClockCanvas.print(hrs % 10);
+      } else if (hrs % 10 == 0) {
+        digitalClockCanvas.setCursor(12, clockY);
+        digitalClockCanvas.print(hrs % 10);
+      } else {
+        digitalClockCanvas.setCursor(14, clockY);
+        digitalClockCanvas.print(hrs % 10);
+      }
+    }
+  } else {
+    if (hrs > 9) {
+      digitalClockCanvas.setCursor(0, clockY);
+      digitalClockCanvas.print(hrs / 10);
+    }
+    if (hrs % 10 == 1) {
+      digitalClockCanvas.setCursor(25, clockY);
+      digitalClockCanvas.print(hrs % 10);
+    } else if (hrs % 10 == 0) {
+      digitalClockCanvas.setCursor(12, clockY);
+      digitalClockCanvas.print(hrs % 10);
+    } else {
+      digitalClockCanvas.setCursor(14, clockY);
+      digitalClockCanvas.print(hrs % 10);
+    }
 
-  // draw digits for hrs
-  if (hrs > 9) {
-    canvas.setCursor(0, clockY);
-    canvas.print(hrs / 10);
   }
-  if (hrs % 10 == 1) {
-    canvas.setCursor(25, clockY);
-    canvas.print(hrs % 10);
-  } else if (hrs % 10 == 0) {
-    canvas.setCursor(12, clockY);
-    canvas.print(hrs % 10);
-  } else {
-    canvas.setCursor(14, clockY);
-    canvas.print(hrs % 10);
-  }
-  
 
-  // draw digits for mins
-  if (mins / 10 == 1) {
-    canvas.setCursor(68, clockY);
-    canvas.print(mins / 10);
-  } else if (mins / 10 == 0) {
-    canvas.setCursor(55, clockY);
-    canvas.print(mins / 10);
+  if (edit_minute) {
+    if (millis > 500) {
+      if (mins / 10 == 1) {
+        digitalClockCanvas.setCursor(68, clockY);
+        digitalClockCanvas.print(mins / 10);
+      } else if (mins / 10 == 0) {
+        digitalClockCanvas.setCursor(55, clockY);
+        digitalClockCanvas.print(mins / 10);
+      } else {
+        digitalClockCanvas.setCursor(56, clockY);
+        digitalClockCanvas.print(mins / 10);
+      }
+      if (mins % 10 == 1) {
+        digitalClockCanvas.setCursor(93, clockY);
+        digitalClockCanvas.print(mins % 10);
+      } else {
+        digitalClockCanvas.setCursor(90, clockY);
+        digitalClockCanvas.print(mins % 10);
+      }
+    }
   } else {
-    canvas.setCursor(56, clockY);
-    canvas.print(mins / 10);
-  }
-  if (mins % 10 == 1) {
-    canvas.setCursor(93, clockY);
-    canvas.print(mins % 10);
-  } else {
-    canvas.setCursor(90, clockY);
-    canvas.print(mins % 10);
+    if (mins / 10 == 1) {
+        digitalClockCanvas.setCursor(68, clockY);
+        digitalClockCanvas.print(mins / 10);
+      } else if (mins / 10 == 0) {
+        digitalClockCanvas.setCursor(55, clockY);
+        digitalClockCanvas.print(mins / 10);
+      } else {
+        digitalClockCanvas.setCursor(56, clockY);
+        digitalClockCanvas.print(mins / 10);
+      }
+      if (mins % 10 == 1) {
+        digitalClockCanvas.setCursor(93, clockY);
+        digitalClockCanvas.print(mins % 10);
+      } else {
+        digitalClockCanvas.setCursor(90, clockY);
+        digitalClockCanvas.print(mins % 10);
+      }
   }
 
   int colon_x = 53;
 
-  // if (hrs % 10 == hrs / 10 == mins % 10 == mins / 10 == 1) {
-  //   colon_x = 56;
-  // }
   // only show the colon in between every two secs
-  int colon_y1 = 24;
-  int colon_y2 = 34;
+  int colon_y1 = 26;
+  int colon_y2 = 36;
   if (edit_hour | edit_minute) {
-    canvas.fillRect(colon_x, colon_y1, 4, 4, WHITE); // draw filled rectangle
-    canvas.fillRect(colon_x, colon_y2, 4, 4, WHITE); // draw filled rectangle
+    digitalClockCanvas.fillRect(colon_x, colon_y1, 4, 4, WHITE); // draw filled rectangle
+    digitalClockCanvas.fillRect(colon_x, colon_y2, 4, 4, WHITE); // draw filled rectangle
   } else {
     if (secs % 2 == 0) { // the result will be 0 or 1 depending if the value is even or odd
-      canvas.fillRect(colon_x, colon_y1, 4, 4, WHITE); // draw filled rectangle
-      canvas.fillRect(colon_x, colon_y2, 4, 4, WHITE); // draw filled rectangle
+      digitalClockCanvas.fillRect(colon_x, colon_y1, 4, 4, WHITE); // draw filled rectangle
+      digitalClockCanvas.fillRect(colon_x, colon_y2, 4, 4, WHITE); // draw filled rectangle
   }
   }
 
-  display.drawBitmap(0, 0, canvas.getBuffer(), canvas.width(), canvas.height(), WHITE, BLACK);
-
+  display.drawBitmap(0, 0, digitalClockCanvas.getBuffer(), SCREEN_WIDTH, SCREEN_HEIGHT, WHITE, BLACK);
 }
-
-// void displayDigitalClock(bool edit_minute, bool edit_hour) {
-//   int w = 32;
-//   int h = 46;
-//   int first_hour_w = 25;
-//   unsigned long millis = rtc.getMillis();
-//   // // draw digits for hrs
-//   if (edit_hour) {
-//     if (millis > 500) {
-//       if (hrs > 9) {
-//         display.drawBitmap(0, 7, bitmaps_digits[hrs / 10], first_hour_w, h, WHITE); // first digit for hrs
-//       } 
-//       display.drawBitmap(25, 7, bitmaps_digits[hrs % 10], w, h, WHITE); // second digit for hrs
-//     }
-//   } else {
-//     if (hrs > 9) {
-//       display.drawBitmap(0, 7, bitmaps_digits[hrs / 10], first_hour_w, h, WHITE); // first digit for hrs
-//     } 
-//     display.drawBitmap(25, 7, bitmaps_digits[hrs % 10], w, h, WHITE); // second digit for hrs
-//   }
-
-//   if (edit_minute) {
-//     if (millis > 500) {
-//       // draw digits for mins
-//       display.drawBitmap(63, 7, bitmaps_digits[mins / 10], w, h, WHITE); // first digit for mins
-//       display.drawBitmap(96, 7, bitmaps_digits[mins % 10], w, h, WHITE); // second digit for mins
-//     }
-//   } else {
-//     // draw digits for mins
-//     display.drawBitmap(63, 7, bitmaps_digits[mins / 10], w, h, WHITE); // first digit for mins
-//     display.drawBitmap(96, 7, bitmaps_digits[mins % 10], w, h, WHITE); // second digit for mins
-//   }
-
-//   // only show the colon in between every two secs
-//   if (edit_hour | edit_minute) {
-//     display.fillRect(57, 21, 4, 4, WHITE); // draw filled rectangle
-//     display.fillRect(57, 37, 4, 4, WHITE); // draw filled rectangle
-//   } else {
-//     if (secs % 2 == 0) { // the result will be 0 or 1 depending if the value is even or odd
-//       display.fillRect(57, 21, 4, 4, WHITE); // draw filled rectangle
-//       display.fillRect(57, 37, 4, 4, WHITE); // draw filled rectangle
-//   }
-//   }
-
-// }
 
 void initiateTime() {
   hrs=rtc.getHour();
@@ -657,14 +655,6 @@ void readButton(unsigned long debounce_time=debounce_time) {
     CCW_STATE = false;
     CW_STATE = false;
   }
-
-
-  // Serial.print("\n");
-  // Serial.print(analogRead(CW_PIN));
-  // Serial.print(" ");
-  // Serial.print(analogRead(CCW_PIN));
-  // Serial.print(" ");
-  // Serial.print(analogRead(PUSH_PIN)); 
 
 }
 
