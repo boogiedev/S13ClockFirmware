@@ -26,6 +26,8 @@
 
 #define DEBUG_MODE false
 
+#define FIRMWARE_VERSION "V:0.01"
+
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 GFXcanvas1 bootCanvas(SCREEN_WIDTH, SCREEN_HEIGHT);
 GFXcanvas1 digitalClockCanvas(SCREEN_WIDTH, SCREEN_HEIGHT);
@@ -311,8 +313,6 @@ void loop() {
     displayDigitalClock(EDIT_MINUTE, EDIT_HOUR);
   }
 
-
-
   readButton(debounce_time);
 
   // Gotta clean this shit up eventually, there is a better way for menu control
@@ -381,15 +381,38 @@ void bootScreen() {
   bootCanvas.setTextSize(1);
   bootCanvas.setFont(&RONIX4);
   bootCanvas.setTextColor(WHITE);
+
   bootCanvas.setCursor(59, 20);
-  bootCanvas.println("DIGITAL");
+  bootCanvas.print("D");
+  bootCanvas.setCursor(70, 20);
+  bootCanvas.print("I");
+  bootCanvas.setCursor(73, 20);
+  bootCanvas.print("G");
+  bootCanvas.setCursor(84, 20);
+  bootCanvas.print("I");
+  bootCanvas.setCursor(87, 20);
+  bootCanvas.print("T");
+  bootCanvas.setCursor(97, 20);
+  bootCanvas.print("A");
+  bootCanvas.setCursor(109, 20);
+  bootCanvas.print("L");
+
   bootCanvas.setCursor(59, 30);
-  bootCanvas.println("CLOCK");
+  bootCanvas.print("C");
+  bootCanvas.setCursor(69, 30);
+  bootCanvas.print("L");
+  bootCanvas.setCursor(78, 30);
+  bootCanvas.print("O");
+  bootCanvas.setCursor(89, 30);
+  bootCanvas.print("C");
+  bootCanvas.setCursor(100, 30);
+  bootCanvas.print("K");
+
   bootCanvas.setFont(NULL);
   bootCanvas.setCursor(59, 43);
   bootCanvas.println("CLUB 187");
   bootCanvas.setCursor(66, 52);
-  bootCanvas.println("V:0.02");
+  bootCanvas.println(FIRMWARE_VERSION);
 
   display.drawBitmap(0, 0, bootCanvas.getBuffer(), SCREEN_WIDTH, SCREEN_HEIGHT, WHITE, BLACK);
   display.display();
@@ -608,7 +631,13 @@ void displayDigitalClock(bool edit_minute, bool edit_hour) {
       }
   }
 
-  int colon_x = 53;
+  int colon_x = 52;
+
+  if ((hrs % 10 == 1) & (mins / 10 != 1)) {
+    colon_x = 50;
+  } else if (mins / 10 == 1) {
+    colon_x = 54;
+  }
 
   // only show the colon in between every two secs
   int colon_y1 = 26;
