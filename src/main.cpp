@@ -1,3 +1,4 @@
+// SELF MAC ADDRESS A0:B7:65:FE:7B:38
 #include <SPI.h>
 #include <Wire.h>
 #include <Adafruit_GFX.h>
@@ -5,6 +6,8 @@
 #include <math.h>
 #include <ESP32Time.h>
 #include "Filter.h"
+#include <esp_now.h>
+#include <WiFi.h>
 #include <Fonts/RONIX18.h>
 #include <Fonts/RONIX17.h>
 #include <Fonts/RONIX14.h>
@@ -212,8 +215,8 @@ const int DISPLAY_CENTER_X = 64;
 const int DISPLAY_CENTER_Y = 32;
 
 // Input Pins
-const int CW_PIN = 15;
-const int CCW_PIN = 4;
+const int CW_PIN = 33;
+const int CCW_PIN = 32;
 const int PUSH_PIN = 34;
 
 // Input VAL
@@ -257,13 +260,50 @@ void bootScreen();
 void silviaScreen();
 void initiateTime();
 void readButton(unsigned long debounce_time);
-
 void drawAnalogBackground(bool editing);
 void drawAnalogThinHand(int hand_angle, int hand_length_long, int hand_legth_short);
 void drawAnalogBoldHand(int hand_angle, int hand_length_long, int hand_legth_short, int hand_dot_size);
 void displayAnalogClock(bool edit_minute, bool edit_hour);
-
 void displayDigitalClock(bool edit_minute, bool edit_hour);
+
+// Gear Indicator Data Struct
+typedef struct shift_data {
+  int hall_1;
+  int hall_2;
+  int hall_3;
+  int hall_4;
+  int hall_5;
+  int hall_6;
+  int gear_position;
+} shift_data;
+
+// Create a structured object
+shift_data shiftData;
+
+
+int CURRENT_GEAR = 0;
+// Callback function executed when data is received
+void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
+  memcpy(&shiftData, incomingData, sizeof(shiftData));
+  Serial.print("Data received: ");
+  Serial.println(len);
+  Serial.print("HALL 1: ");
+  Serial.println(shiftData.hall_1);
+  Serial.print("HALL 2: ");
+  Serial.println(shiftData.hall_2);
+  Serial.print("HALL 3: ");
+  Serial.println(shiftData.hall_3);
+  Serial.print("HALL 4: ");
+  Serial.println(shiftData.hall_4);
+  Serial.print("HALL 5: ");
+  Serial.println(shiftData.hall_5);
+  Serial.print("HALL 6: ");
+  Serial.println(shiftData.hall_6);
+  Serial.print("Gear Position: ");
+  Serial.println(shiftData.gear_position);
+  Serial.println();
+  CURRENT_GEAR = shiftData.gear_position;
+}
 
 void setup() {
 
@@ -275,6 +315,21 @@ void setup() {
   // Serial Out Setup
   Serial.begin(9600);
   Serial.println("Starting System");
+
+  // Print MAC Address to Serial monitor
+  Serial.print("MAC Address: ");
+  Serial.println(WiFi.macAddress());
+
+  WiFi.mode(WIFI_STA);
+ 
+  // Initilize ESP-NOW
+  if (esp_now_init() != ESP_OK) {
+    Serial.println("Error initializing ESP-NOW");
+    return;
+  }
+  
+  // Register callback function
+  esp_now_register_recv_cb(OnDataRecv);
 
   // Display Setup
   display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS);
@@ -424,31 +479,49 @@ void bootScreen() {
 
 
 void displayAnalogClock(bool edit_minute, bool edit_hour) {
-    drawAnalogBackground(edit_minute | edit_hour); // draw the background - fullscreen circle, dots for seconds, big tickmarks, numbers
 
-    // draw the needles with angles based on the time value
-    if (edit_minute) {
-      if (rtc.getMillis() > 500) {
-        drawAnalogBoldHand(mins*6, 25, 10, 1); // minute hand 
-      }
-    } else {
+  bootCanvas.setTextSize(1);
+  bootCanvas.setFont(&RONIX5);
+  display.setCursor(0, 0);
+  if (CURRENT_GEAR > 0) {
+    display.print(CURRENT_GEAR);
+  } else if (CURRENT_GEAR < 0) {
+    display.print("Reverse");
+  } else if (CURRENT_GEAR == 0) {
+    display.print("Neutral");
+  } else {
+    display.print("No");
+    display.setCursor(0, 10);
+    display.print("Gear");
+    display.setCursor(0, 20);
+    display.print("Data");
+  }
+
+  drawAnalogBackground(edit_minute | edit_hour); // draw the background - fullscreen circle, dots for seconds, big tickmarks, numbers
+
+  // draw the needles with angles based on the time value
+  if (edit_minute) {
+    if (rtc.getMillis() > 500) {
       drawAnalogBoldHand(mins*6, 25, 10, 1); // minute hand 
     }
+  } else {
+    drawAnalogBoldHand(mins*6, 25, 10, 1); // minute hand 
+  }
 
-    if (edit_hour) {
-      if (rtc.getMillis() > 500) {
-        drawAnalogBoldHand(hrs*30 + (mins / 2), 18, 10, 1); // hour hand
-      }
-    } else {
+  if (edit_hour) {
+    if (rtc.getMillis() > 500) {
       drawAnalogBoldHand(hrs*30 + (mins / 2), 18, 10, 1); // hour hand
     }
+  } else {
+    drawAnalogBoldHand(hrs*30 + (mins / 2), 18, 10, 1); // hour hand
+  }
 
 
-    drawAnalogThinHand(secs*6, 27, 22); // second hand
+  drawAnalogThinHand(secs*6, 27, 22); // second hand
 
-    // draw the center circle to cover the center part of the hands
-    display.fillCircle(DISPLAY_CENTER_X, DISPLAY_CENTER_Y, 3, WHITE);
-    display.fillCircle(DISPLAY_CENTER_X, DISPLAY_CENTER_Y, 2, BLACK);
+  // draw the center circle to cover the center part of the hands
+  display.fillCircle(DISPLAY_CENTER_X, DISPLAY_CENTER_Y, 3, WHITE);
+  display.fillCircle(DISPLAY_CENTER_X, DISPLAY_CENTER_Y, 2, BLACK);
 
 }
 
