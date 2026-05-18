@@ -168,9 +168,9 @@ void setup() {
     bootScreen();
     display.clearDisplay();
     display.display();
-    delay(2000);            // pause between static Club 187 and its dither-out
+    delay(1000);            // pause between static Club 187 and its dither-out
     club187Transition();    // Club 187 dissolves via atkinson dither
-    delay(500);             // pause between the 187 dissolve and silvia resolve
+    delay(1000);             // pause between the 187 dissolve and silvia resolve
     silviaTransition();     // silvia wordmark resolves + outline + logo reveal
     display.clearDisplay();
     display.display();
@@ -230,6 +230,8 @@ void loop() {
 // club187Transition: Club 187 logo dissolves out via the atkinson-dithered
 // frames (0-37 of ANIMATEDLOGOARRAY_ATKINSON). Each frame is a dithered step
 // in the morph from 187 imagery toward the silvia wordmark. ~1.9s total.
+// Ends with the screen cleared so any caller delay before the next phase is
+// a clean blank rather than a frozen half-rendered wordmark.
 void club187Transition() {
   for (int i = 0; i < 38; i++) {
     display.clearDisplay();
@@ -238,6 +240,8 @@ void club187Transition() {
     display.display();
     delay(50);
   }
+  display.clearDisplay();
+  display.display();
 }
 
 // silviaTransition: silvia resolves in.
