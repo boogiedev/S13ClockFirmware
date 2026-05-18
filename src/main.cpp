@@ -227,15 +227,21 @@ void loop() {
 }
 
 
-// club187Transition: Club 187 logo dissolves out via the atkinson-dithered
-// frames (0-37 of ANIMATEDLOGOARRAY_ATKINSON). Each frame is a dithered step
-// in the morph from 187 imagery toward the silvia wordmark. ~1.9s total.
-// Ends with the screen cleared so any caller delay before the next phase is
-// a clean blank rather than a frozen half-rendered wordmark.
+// club187Transition: the 187 -> silvia morph animation, run as one
+// continuous sequence the way ANIMATEDLOGOARRAY_ATKINSON and ANIMATEDLOGOARRAY
+// were designed to be played together:
+//   frames 0-37  : atkinson-dithered buildup (the 187 imagery dissolves)
+//   frames 38-50 : clean ANIMATEDLOGOARRAY (silvia wordmark resolves cleanly)
+// ~2.55s total. Ends with the screen cleared so any caller delay before the
+// next phase is a clean blank.
 void club187Transition() {
-  for (int i = 0; i < 38; i++) {
+  for (int i = 0; i < ANIMATEDLOGOARRAY_LEN; i++) {
     display.clearDisplay();
-    bootCanvas.drawBitmap(0, 0, ANIMATEDLOGOARRAY_ATKINSON[i], 128, 64, WHITE, BLACK);
+    if (i >= 38) {
+      bootCanvas.drawBitmap(0, 0, ANIMATEDLOGOARRAY[i], 128, 64, WHITE, BLACK);
+    } else {
+      bootCanvas.drawBitmap(0, 0, ANIMATEDLOGOARRAY_ATKINSON[i], 128, 64, WHITE, BLACK);
+    }
     display.drawBitmap(0, 0, bootCanvas.getBuffer(), SCREEN_WIDTH, SCREEN_HEIGHT, WHITE, BLACK);
     display.display();
     delay(50);
@@ -244,22 +250,13 @@ void club187Transition() {
   display.display();
 }
 
-// silviaTransition: silvia resolves in.
-//   1. Clean ANIMATEDLOGOARRAY frames 38-50 — wordmark sharpens (~0.65s)
-//   2. Outline alone (250ms) — eye registers the starting frame
-//   3. Crossfade — outline pixels NOT in SILVIALOGO fade out while
+// silviaTransition: silvia logo reveal.
+//   1. Outline alone (250ms) — eye registers the starting frame
+//   2. Crossfade — outline pixels NOT in SILVIALOGO fade out while
 //      SILVIALOGO-only pixels fade in. SSD1306 is 1-bit so opacity is faked
 //      via per-pixel hash threshold (0..15) ordered dither. ~1s.
-//   4. Hold the full SILVIALOGO (2.5s).
+//   3. Hold the full SILVIALOGO (2.5s).
 void silviaTransition() {
-  for (int i = 38; i < ANIMATEDLOGOARRAY_LEN; i++) {
-    display.clearDisplay();
-    bootCanvas.drawBitmap(0, 0, ANIMATEDLOGOARRAY[i], 128, 64, WHITE, BLACK);
-    display.drawBitmap(0, 0, bootCanvas.getBuffer(), SCREEN_WIDTH, SCREEN_HEIGHT, WHITE, BLACK);
-    display.display();
-    delay(50);
-  }
-
   display.clearDisplay();
   bootCanvas.fillScreen(0);
   bootCanvas.drawBitmap(0, 0, S13SILVIAOUTLINE, 128, 64, WHITE, BLACK);
