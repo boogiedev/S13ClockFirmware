@@ -232,8 +232,9 @@ void loop() {
 // were designed to be played together:
 //   frames 0-37  : atkinson-dithered buildup (the 187 imagery dissolves)
 //   frames 38-50 : clean ANIMATEDLOGOARRAY (silvia wordmark resolves cleanly)
-// ~2.55s total. Ends with the screen cleared so any caller delay before the
-// next phase is a clean blank.
+//   tail         : dithered fade-out of the resolved final frame to black
+// Ends with the screen cleared so any caller delay before the next phase is
+// a clean blank.
 void club187Transition() {
   for (int i = 0; i < ANIMATEDLOGOARRAY_LEN; i++) {
     display.clearDisplay();
@@ -246,23 +247,75 @@ void club187Transition() {
     display.display();
     delay(50);
   }
+  delay(700);
+
+  // Dithered fade-out of the final wordmark frame. Per-pixel hash threshold
+  // (0..15); pixels drawn while threshold >= step, so coverage decreases each
+  // frame until none remain. Same dither math as the outline->logo crossfade.
+  const unsigned char* last_frame = ANIMATEDLOGOARRAY[ANIMATEDLOGOARRAY_LEN - 1];
+  constexpr int OUT_STEPS = 16;
+  constexpr int OUT_STEP_MS = 30;
+  for (int step = 1; step <= OUT_STEPS; step++) {
+    bootCanvas.fillScreen(0);
+    for (int y = 0; y < 64; y++) {
+      for (int xb = 0; xb < 16; xb++) {
+        uint8_t b = pgm_read_byte(&last_frame[y * 16 + xb]);
+        if (!b) continue;
+        for (int bit = 0; bit < 8; bit++) {
+          if (!(b & (0x80 >> bit))) continue;
+          int x = (xb << 3) | bit;
+          uint8_t threshold = (x * 31 + y * 17) & 0x0f;
+          if (threshold >= step) {
+            bootCanvas.drawPixel(x, y, WHITE);
+          }
+        }
+      }
+    }
+    display.clearDisplay();
+    display.drawBitmap(0, 0, bootCanvas.getBuffer(), SCREEN_WIDTH, SCREEN_HEIGHT, WHITE, BLACK);
+    display.display();
+    delay(OUT_STEP_MS);
+  }
+
   display.clearDisplay();
   display.display();
 }
 
 // silviaTransition: silvia logo reveal.
-//   1. Outline alone (250ms) — eye registers the starting frame
-//   2. Crossfade — outline pixels NOT in SILVIALOGO fade out while
+//   1. Dithered fade-in of the outline from black (~480ms)
+//   2. Brief hold of the full outline (150ms)
+//   3. Crossfade — outline pixels NOT in SILVIALOGO fade out while
 //      SILVIALOGO-only pixels fade in. SSD1306 is 1-bit so opacity is faked
 //      via per-pixel hash threshold (0..15) ordered dither. ~1s.
-//   3. Hold the full SILVIALOGO (2.5s).
+//   4. Hold the full SILVIALOGO (2.5s).
 void silviaTransition() {
-  display.clearDisplay();
-  bootCanvas.fillScreen(0);
-  bootCanvas.drawBitmap(0, 0, S13SILVIAOUTLINE, 128, 64, WHITE, BLACK);
-  display.drawBitmap(0, 0, bootCanvas.getBuffer(), SCREEN_WIDTH, SCREEN_HEIGHT, WHITE, BLACK);
-  display.display();
-  delay(250);
+  // Fade-in: outline pixels appear progressively via dither. Per-pixel hash
+  // threshold (0..15); drawn iff threshold < step, so coverage grows each
+  // frame from none to full outline.
+  constexpr int IN_STEPS = 16;
+  constexpr int IN_STEP_MS = 30;
+  for (int step = 1; step <= IN_STEPS; step++) {
+    bootCanvas.fillScreen(0);
+    for (int y = 0; y < 64; y++) {
+      for (int xb = 0; xb < 16; xb++) {
+        uint8_t b = pgm_read_byte(&S13SILVIAOUTLINE[y * 16 + xb]);
+        if (!b) continue;
+        for (int bit = 0; bit < 8; bit++) {
+          if (!(b & (0x80 >> bit))) continue;
+          int x = (xb << 3) | bit;
+          uint8_t threshold = (x * 31 + y * 17) & 0x0f;
+          if (threshold < step) {
+            bootCanvas.drawPixel(x, y, WHITE);
+          }
+        }
+      }
+    }
+    display.clearDisplay();
+    display.drawBitmap(0, 0, bootCanvas.getBuffer(), SCREEN_WIDTH, SCREEN_HEIGHT, WHITE, BLACK);
+    display.display();
+    delay(IN_STEP_MS);
+  }
+  delay(150);
 
   constexpr int FADE_STEPS = 16;
   constexpr int FADE_STEP_MS = 65;
