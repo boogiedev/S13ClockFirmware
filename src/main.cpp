@@ -252,22 +252,32 @@ void silviaScreen() {
   display.display();
   delay(250);
 
-  // Dissolve fade: outline stays visible while SILVIALOGO pixels are revealed
-  // progressively via an ordered dither. Each step adds another slice of the
-  // logo's white pixels based on a per-pixel hash threshold (no native opacity
-  // on a 1-bit OLED, so we fake the fade with pixel coverage).
+  // Crossfade: outline pixels NOT in SILVIALOGO fade out on the same per-pixel
+  // schedule as SILVIALOGO-only pixels fade in. Pixels in both stay lit
+  // throughout. SSD1306 is 1-bit so opacity is faked via ordered dither: each
+  // pixel has a stable hash threshold (0..15) that decides when it transitions.
   constexpr int FADE_STEPS = 16;
-  constexpr int FADE_STEP_MS = 30;
+  constexpr int FADE_STEP_MS = 35;
   for (int step = 1; step <= FADE_STEPS; step++) {
     bootCanvas.fillScreen(0);
-    bootCanvas.drawBitmap(0, 0, S13SILVIAOUTLINE, 128, 64, WHITE, BLACK);
     for (int y = 0; y < 64; y++) {
-      for (int x = 0; x < 128; x++) {
-        uint8_t b = pgm_read_byte(&SILVIALOGO[y * 16 + (x >> 3)]);
-        if (!(b & (0x80 >> (x & 7)))) continue;            // pixel not lit in logo
-        uint8_t threshold = (x * 31 + y * 17) & 0x0f;       // 0..15 pseudo-random
-        if (threshold < step) {
-          bootCanvas.drawPixel(x, y, WHITE);
+      for (int xb = 0; xb < 16; xb++) {
+        uint8_t outline_byte = pgm_read_byte(&S13SILVIAOUTLINE[y * 16 + xb]);
+        uint8_t logo_byte    = pgm_read_byte(&SILVIALOGO[y * 16 + xb]);
+        if (!outline_byte && !logo_byte) continue;
+        for (int bit = 0; bit < 8; bit++) {
+          uint8_t mask = 0x80 >> bit;
+          bool in_outline = outline_byte & mask;
+          bool in_logo    = logo_byte & mask;
+          if (!in_outline && !in_logo) continue;
+          int x = (xb << 3) | bit;
+          uint8_t threshold = (x * 31 + y * 17) & 0x0f;  // 0..15
+          bool keep_outline = threshold >= step;          // outline-only pixels: fade out
+          bool add_logo     = threshold <  step;          // logo-only pixels: fade in
+          // Pixels in both are guaranteed visible since one of the two is true.
+          if ((in_outline && keep_outline) || (in_logo && add_logo)) {
+            bootCanvas.drawPixel(x, y, WHITE);
+          }
         }
       }
     }
