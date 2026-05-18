@@ -244,7 +244,14 @@ void silviaScreen() {
     delay(50);
   }
 
-  // Hold the full silvia logo for 3s
+  // Outline first (~400ms), then fill to the full silvia logo held for 3s
+  display.clearDisplay();
+  bootCanvas.fillScreen(0);
+  bootCanvas.drawBitmap(0, 0, S13SILVIAOUTLINE, 128, 64, WHITE, BLACK);
+  display.drawBitmap(0, 0, bootCanvas.getBuffer(), SCREEN_WIDTH, SCREEN_HEIGHT, WHITE, BLACK);
+  display.display();
+  delay(400);
+
   display.clearDisplay();
   bootCanvas.fillScreen(0);
   bootCanvas.drawBitmap(0, 0, SILVIALOGO, 128, 64, WHITE, BLACK);
