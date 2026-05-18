@@ -95,7 +95,8 @@ float cosTable[NUM_POINTS];
 
 // Function Definitions
 void bootScreen();
-void silviaScreen();
+void club187Transition();
+void silviaTransition();
 void initiateTime();
 void readButton();
 void drawAnalogBackground();
@@ -167,11 +168,13 @@ void setup() {
     bootScreen();
     display.clearDisplay();
     display.display();
-    delay(2000);          // pause between Club 187 and silvia transition
-    silviaScreen();
+    delay(2000);            // pause between static Club 187 and its dither-out
+    club187Transition();    // Club 187 dissolves via atkinson dither
+    delay(500);             // pause between the 187 dissolve and silvia resolve
+    silviaTransition();     // silvia wordmark resolves + outline + logo reveal
     display.clearDisplay();
     display.display();
-    delay(1000);
+    delay(1000);            // pause before clock face appears
   }
 
   // Setup Clock
@@ -224,27 +227,35 @@ void loop() {
 }
 
 
-void silviaScreen() {
-  // Animated transition (~2.5s) into the silvia logo:
-  //   frames 0-37 use the atkinson-dithered array — sparse dots that fill in
-  //     gradually, giving a smooth "wipe" feel out of the Club 187 boot screen
-  //   frames 38-50 use the clean ANIMATEDLOGOARRAY — wordmark resolves out
-  //     of the dither
-  // The ANIMATEDLOGOARRAY frames only cover rows 28-36 (a thin wordmark), so
-  // we follow the transition with the full SILVIALOGO held for 3s.
-  for (int i = 0; i < ANIMATEDLOGOARRAY_LEN; i++) {
+// club187Transition: Club 187 logo dissolves out via the atkinson-dithered
+// frames (0-37 of ANIMATEDLOGOARRAY_ATKINSON). Each frame is a dithered step
+// in the morph from 187 imagery toward the silvia wordmark. ~1.9s total.
+void club187Transition() {
+  for (int i = 0; i < 38; i++) {
     display.clearDisplay();
-    if (i >= 38) {
-      bootCanvas.drawBitmap(0, 0, ANIMATEDLOGOARRAY[i], 128, 64, WHITE, BLACK);
-    } else {
-      bootCanvas.drawBitmap(0, 0, ANIMATEDLOGOARRAY_ATKINSON[i], 128, 64, WHITE, BLACK);
-    }
+    bootCanvas.drawBitmap(0, 0, ANIMATEDLOGOARRAY_ATKINSON[i], 128, 64, WHITE, BLACK);
+    display.drawBitmap(0, 0, bootCanvas.getBuffer(), SCREEN_WIDTH, SCREEN_HEIGHT, WHITE, BLACK);
+    display.display();
+    delay(50);
+  }
+}
+
+// silviaTransition: silvia resolves in.
+//   1. Clean ANIMATEDLOGOARRAY frames 38-50 — wordmark sharpens (~0.65s)
+//   2. Outline alone (250ms) — eye registers the starting frame
+//   3. Crossfade — outline pixels NOT in SILVIALOGO fade out while
+//      SILVIALOGO-only pixels fade in. SSD1306 is 1-bit so opacity is faked
+//      via per-pixel hash threshold (0..15) ordered dither. ~1s.
+//   4. Hold the full SILVIALOGO (2.5s).
+void silviaTransition() {
+  for (int i = 38; i < ANIMATEDLOGOARRAY_LEN; i++) {
+    display.clearDisplay();
+    bootCanvas.drawBitmap(0, 0, ANIMATEDLOGOARRAY[i], 128, 64, WHITE, BLACK);
     display.drawBitmap(0, 0, bootCanvas.getBuffer(), SCREEN_WIDTH, SCREEN_HEIGHT, WHITE, BLACK);
     display.display();
     delay(50);
   }
 
-  // Show the outline alone briefly so the eye registers it as a starting frame
   display.clearDisplay();
   bootCanvas.fillScreen(0);
   bootCanvas.drawBitmap(0, 0, S13SILVIAOUTLINE, 128, 64, WHITE, BLACK);
@@ -252,10 +263,6 @@ void silviaScreen() {
   display.display();
   delay(250);
 
-  // Crossfade: outline pixels NOT in SILVIALOGO fade out on the same per-pixel
-  // schedule as SILVIALOGO-only pixels fade in. Pixels in both stay lit
-  // throughout. SSD1306 is 1-bit so opacity is faked via ordered dither: each
-  // pixel has a stable hash threshold (0..15) that decides when it transitions.
   constexpr int FADE_STEPS = 16;
   constexpr int FADE_STEP_MS = 65;
   for (int step = 1; step <= FADE_STEPS; step++) {
@@ -271,10 +278,9 @@ void silviaScreen() {
           bool in_logo    = logo_byte & mask;
           if (!in_outline && !in_logo) continue;
           int x = (xb << 3) | bit;
-          uint8_t threshold = (x * 31 + y * 17) & 0x0f;  // 0..15
-          bool keep_outline = threshold >= step;          // outline-only pixels: fade out
-          bool add_logo     = threshold <  step;          // logo-only pixels: fade in
-          // Pixels in both are guaranteed visible since one of the two is true.
+          uint8_t threshold = (x * 31 + y * 17) & 0x0f;
+          bool keep_outline = threshold >= step;
+          bool add_logo     = threshold <  step;
           if ((in_outline && keep_outline) || (in_logo && add_logo)) {
             bootCanvas.drawPixel(x, y, WHITE);
           }
@@ -287,7 +293,6 @@ void silviaScreen() {
     delay(FADE_STEP_MS);
   }
 
-  // Hold the fully revealed silvia logo
   delay(2500);
 }
 
