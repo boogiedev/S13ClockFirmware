@@ -257,7 +257,7 @@ void silviaScreen() {
   // throughout. SSD1306 is 1-bit so opacity is faked via ordered dither: each
   // pixel has a stable hash threshold (0..15) that decides when it transitions.
   constexpr int FADE_STEPS = 16;
-  constexpr int FADE_STEP_MS = 35;
+  constexpr int FADE_STEP_MS = 65;
   for (int step = 1; step <= FADE_STEPS; step++) {
     bootCanvas.fillScreen(0);
     for (int y = 0; y < 64; y++) {
