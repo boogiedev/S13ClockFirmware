@@ -61,9 +61,6 @@ constexpr unsigned long DEBOUNCE_FACE_MS = 150;
 constexpr unsigned long DEBOUNCE_EDIT_HOUR_MS = 600;
 constexpr unsigned long DEBOUNCE_EDIT_MINUTE_MS = 400;
 
-// Target draw cadence (~30 FPS). Buttons still poll every loop iteration.
-constexpr unsigned long FRAME_INTERVAL_MS = 33;
-
 // Input Filters
 ExponentialFilter<long> CWFilter(85, 0);
 ExponentialFilter<long> CCWFilter(90, 0);
@@ -74,7 +71,6 @@ bool cwEvent = false;
 bool ccwEvent = false;
 bool pushEvent = false;
 unsigned long lastButtonMs = 0;
-unsigned long lastDrawMs = 0;
 
 // Clock Definitions
 ESP32Time rtc(3600);
@@ -212,13 +208,11 @@ void loop() {
     }
   }
 
-  // Rate-limit the OLED redraw (~30 FPS). Buttons still polled every iteration.
-  unsigned long now = millis();
-  if (now - lastDrawMs < FRAME_INTERVAL_MS) {
-    return;
-  }
-  lastDrawMs = now;
-
+  // No explicit FPS cap — display.display() does a blocking i2c transfer that
+  // naturally throttles the loop to ~30 Hz. Adding an early-return rate limit
+  // here caused readButton() to run thousands of times per second instead of
+  // ~30, which let the exponential ADC filter saturate from brief noise spikes
+  // and triggered phantom face-switches just from touching nearby wires.
   initiateTime();
   if (face == Face::Analog) {
     displayAnalogClock(editState);
@@ -231,6 +225,18 @@ void loop() {
 
 
 void silviaScreen() {
+  // Animated buildup of the wordmark (~2.5s). Frames in ANIMATEDLOGOARRAY only
+  // cover rows 28-36 (a thin text strip), so finishing on the last frame alone
+  // is invisible at boot — we follow it with the full SILVIALOGO hold.
+  for (int i = 0; i < ANIMATEDLOGOARRAY_LEN; i++) {
+    display.clearDisplay();
+    bootCanvas.drawBitmap(0, 0, ANIMATEDLOGOARRAY[i], 128, 64, WHITE, BLACK);
+    display.drawBitmap(0, 0, bootCanvas.getBuffer(), SCREEN_WIDTH, SCREEN_HEIGHT, WHITE, BLACK);
+    display.display();
+    delay(50);
+  }
+
+  // Hold the full silvia logo for 3s
   display.clearDisplay();
   bootCanvas.fillScreen(0);
   bootCanvas.drawBitmap(0, 0, SILVIALOGO, 128, 64, WHITE, BLACK);
