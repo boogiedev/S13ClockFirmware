@@ -41,63 +41,72 @@ GFXcanvas1 digitalClockCanvas(SCREEN_WIDTH, SCREEN_HEIGHT);
 
 
 // Display Constants
-const int DISPLAY_CENTER_X = 64;
-const int DISPLAY_CENTER_Y = 32;
+constexpr int DISPLAY_CENTER_X = 64;
+constexpr int DISPLAY_CENTER_Y = 32;
 
 // Input Pins
-const int CW_PIN = 33;
-const int CCW_PIN = 32;
-const int PUSH_PIN = 34;
+constexpr int CW_PIN = 33;
+constexpr int CCW_PIN = 32;
+constexpr int PUSH_PIN = 34;
 
-// Input VAL
-int CW_VAL = 0;
-int CCW_VAL = 0;
-int PUSH_VAL = 0;
+// Filtered ADC threshold for a press (raw range is 0..4095; filter asymptotes,
+// so exact-equality compares are flaky — use a wide margin).
+constexpr int BUTTON_THRESHOLD = 3500;
+
+// Debounce windows by mode
+constexpr unsigned long DEBOUNCE_FACE_MS = 150;
+constexpr unsigned long DEBOUNCE_EDIT_HOUR_MS = 600;
+constexpr unsigned long DEBOUNCE_EDIT_MINUTE_MS = 400;
+
+// Target draw cadence (~30 FPS). Buttons still poll every loop iteration.
+constexpr unsigned long FRAME_INTERVAL_MS = 33;
+
 // Input Filters
 ExponentialFilter<long> CWFilter(85, 0);
 ExponentialFilter<long> CCWFilter(90, 0);
 ExponentialFilter<long> PUSHFilter(90, 0);
-// Input States
-bool CW_STATE = false;
-bool CCW_STATE = false;
-bool PUSH_STATE = false;
-int PUSH_EDIT_STATE = 0;
-bool EDIT_HOUR = false;
-bool EDIT_MINUTE = false;
-// Input Debouncing
-unsigned long lastDebounceTime1;
-unsigned long lastDebounceClockEdit;
-int debounce_time = 150;
+
+// One-shot button events, set by readButton() each loop iteration
+bool cwEvent = false;
+bool ccwEvent = false;
+bool pushEvent = false;
+unsigned long lastButtonMs = 0;
+unsigned long lastDrawMs = 0;
 
 // Clock Definitions
 ESP32Time rtc(3600);
-int hrs=0;
-int mins=0;
-int secs=0;
+int hrs = 0;
+int mins = 0;
+int secs = 0;
 
-// Clock Display Flags
-bool showAnalogClock = true;
-bool showDigitalCLock = false;
+// Mode state machine — two orthogonal axes: which face is shown, and which
+// time component (if any) is currently being edited.
+enum class Face : uint8_t { Analog, Digital };
+enum class EditState : uint8_t { None, Hour, Minute };
 
-const int NUM_POINTS = 60;
-const int RADIUS = 28;
-int pointsX[NUM_POINTS];
-int pointsY[NUM_POINTS];
+Face face = Face::Analog;
+EditState editState = EditState::None;
+
+// 60-step sin/cos lookup, indexed by 6° increments (matches second, minute, and
+// the analog face's 60-dot ring). Avoids ~120 trig calls per frame.
+constexpr int NUM_POINTS = 60;
+float sinTable[NUM_POINTS];
+float cosTable[NUM_POINTS];
 
 
 // Function Definitions
 void bootScreen();
 void silviaScreen();
 void initiateTime();
-void readButton(unsigned long debounce_time);
-void drawAnalogBackground(bool editing);
-void drawAnalogThinHand(int hand_angle, int hand_length_long, int hand_legth_short);
-void drawAnalogBoldHand(int hand_angle, int hand_length_long, int hand_legth_short, int hand_dot_size);
-void displayAnalogClock(bool edit_minute, bool edit_hour);
-void displayDigitalClock(bool edit_minute, bool edit_hour);
+void readButton();
+void drawAnalogBackground();
+void drawAnalogThinHand(int hand_angle, int hand_length_long, int hand_length_short);
+void drawAnalogBoldHand(int hand_angle, int hand_length_long, int hand_length_short, int hand_dot_size);
+void displayAnalogClock(EditState edit);
+void displayDigitalClock(EditState edit);
 
-// Gear Indicator Data Struct
-typedef struct shift_data {
+// Gear Indicator Data Struct (ESP-NOW payload from shifter board)
+struct shift_data {
   int hall_1;
   int hall_2;
   int hall_3;
@@ -105,9 +114,8 @@ typedef struct shift_data {
   int hall_5;
   int hall_6;
   int gear_position;
-} shift_data;
+};
 
-// Create a structured object
 shift_data shiftData;
 
 
@@ -115,24 +123,15 @@ int CURRENT_GEAR = 0;
 // Callback function executed when data is received
 void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
   memcpy(&shiftData, incomingData, sizeof(shiftData));
-  Serial.print("Data received: ");
-  Serial.println(len);
-  Serial.print("HALL 1: ");
-  Serial.println(shiftData.hall_1);
-  Serial.print("HALL 2: ");
-  Serial.println(shiftData.hall_2);
-  Serial.print("HALL 3: ");
-  Serial.println(shiftData.hall_3);
-  Serial.print("HALL 4: ");
-  Serial.println(shiftData.hall_4);
-  Serial.print("HALL 5: ");
-  Serial.println(shiftData.hall_5);
-  Serial.print("HALL 6: ");
-  Serial.println(shiftData.hall_6);
-  Serial.print("Gear Position: ");
-  Serial.println(shiftData.gear_position);
-  Serial.println();
   CURRENT_GEAR = shiftData.gear_position;
+
+  if (DEBUG_MODE) {
+    Serial.printf("ESP-NOW recv %d bytes | HALL %d %d %d %d %d %d | gear=%d\n",
+                  len,
+                  shiftData.hall_1, shiftData.hall_2, shiftData.hall_3,
+                  shiftData.hall_4, shiftData.hall_5, shiftData.hall_6,
+                  shiftData.gear_position);
+  }
 }
 
 void setup() {
@@ -179,71 +178,50 @@ void setup() {
   // Setup Clock
   rtc.setTime(1712484660);
   Serial.println(rtc.getTime("%A, %B %d %Y %H:%M:%S"));
+
+  // Pre-compute sin/cos for each minute/second position (6° increments)
   for (int i = 0; i < NUM_POINTS; i++) {
-    pointsX[i] = 64 + RADIUS * cos(i * 6.28 / NUM_POINTS);
-    pointsY[i] = 32 + RADIUS * sin(i * 6.28 / NUM_POINTS);
+    float angle = radians(i * 6);
+    sinTable[i] = sin(angle);
+    cosTable[i] = cos(angle);
   }
 
-
   display.clearDisplay();
-  display.display();   
+  display.display();
 }
 
 void loop() {
+  readButton();
 
-  // Clock Display Logic
-  if (showAnalogClock) {
-    displayAnalogClock(EDIT_MINUTE, EDIT_HOUR);
-  } else if (showDigitalCLock) {
-    displayDigitalClock(EDIT_MINUTE, EDIT_HOUR);
-  }
-
-  readButton(debounce_time);
-
-  // Gotta clean this shit up eventually, there is a better way for menu control
-  if (CW_STATE & (PUSH_EDIT_STATE == 0)) {
-    Serial.println("Turned Clockwise");
-    showAnalogClock = !showAnalogClock;
-    showDigitalCLock = !showDigitalCLock;
-  } else if (CCW_STATE & (PUSH_EDIT_STATE == 0)) {
-    Serial.println("Turned Counter Clockwise");
-    showAnalogClock = !showAnalogClock;
-    showDigitalCLock = !showDigitalCLock;
-  } else if ( PUSH_STATE) {
-    Serial.println("Pushed Button");
-    PUSH_EDIT_STATE += 1;
-    if (PUSH_EDIT_STATE > 2) {
-      PUSH_EDIT_STATE = 0;
-    }
-    if ( (PUSH_EDIT_STATE == 1)) {
-      EDIT_HOUR = true;
-      EDIT_MINUTE = false;
-      debounce_time = 600;
-      Serial.println("Editing Hour Hand");
-    } else if ( (PUSH_EDIT_STATE == 2)) {
-      EDIT_MINUTE = true;
-      EDIT_HOUR = false;
-      debounce_time = 400;
-      Serial.println("Editing Minute Hand");
-    } else {
-      EDIT_HOUR = false;
-      EDIT_MINUTE = false;
-      debounce_time = 200;
+  // Button handling — single source of truth driving (face, editState)
+  if (pushEvent) {
+    // Cycle edit phase: None -> Hour -> Minute -> None
+    editState = (editState == EditState::None)  ? EditState::Hour
+              : (editState == EditState::Hour)  ? EditState::Minute
+                                                : EditState::None;
+  } else if (cwEvent || ccwEvent) {
+    if (editState == EditState::None) {
+      face = (face == Face::Analog) ? Face::Digital : Face::Analog;
+    } else if (cwEvent) {
+      // Match the original analogue-clock UX: time edits only go forward
+      time_t epoch = rtc.getLocalEpoch();
+      rtc.setTime(epoch + (editState == EditState::Hour ? 3600 : 60));
     }
   }
 
-  int currentEpoch = rtc.getLocalEpoch();
-  if ((EDIT_HOUR & CW_STATE) & ((millis() - lastDebounceClockEdit) > debounce_time)) {
-    rtc.setTime(currentEpoch + 3600);
-    lastDebounceClockEdit = millis();
-  } else if ((EDIT_MINUTE & CW_STATE) & ((millis() - lastDebounceClockEdit) > debounce_time)) {
-    rtc.setTime(currentEpoch + 60);
-    lastDebounceClockEdit = millis();
+  // Rate-limit the OLED redraw (~30 FPS). Buttons still polled every iteration.
+  unsigned long now = millis();
+  if (now - lastDrawMs < FRAME_INTERVAL_MS) {
+    return;
   }
-
-
+  lastDrawMs = now;
 
   initiateTime();
+  if (face == Face::Analog) {
+    displayAnalogClock(editState);
+  } else {
+    displayDigitalClock(editState);
+  }
   display.display();
   display.clearDisplay();
 }
@@ -314,10 +292,8 @@ void bootScreen() {
 
 
 
-void displayAnalogClock(bool edit_minute, bool edit_hour) {
-
-  bootCanvas.setTextSize(1);
-  bootCanvas.setFont(&RONIX5);
+void displayAnalogClock(EditState edit) {
+  // Gear indicator (top-left corner)
   display.setCursor(0, 0);
   if (CURRENT_GEAR > 0) {
     display.print(CURRENT_GEAR);
@@ -333,232 +309,148 @@ void displayAnalogClock(bool edit_minute, bool edit_hour) {
     display.print("Data");
   }
 
-  drawAnalogBackground(edit_minute | edit_hour); // draw the background - fullscreen circle, dots for seconds, big tickmarks, numbers
+  drawAnalogBackground();
 
-  // draw the needles with angles based on the time value
-  if (edit_minute) {
-    if (rtc.getMillis() > 500) {
-      drawAnalogBoldHand(mins*6, 25, 10, 1); // minute hand 
-    }
-  } else {
-    drawAnalogBoldHand(mins*6, 25, 10, 1); // minute hand 
-  }
+  // Hands blink at 1Hz when their unit is being edited
+  bool blinkOn = rtc.getMillis() > 500;
+  bool showMinuteHand = (edit != EditState::Minute) || blinkOn;
+  bool showHourHand = (edit != EditState::Hour) || blinkOn;
 
-  if (edit_hour) {
-    if (rtc.getMillis() > 500) {
-      drawAnalogBoldHand(hrs*30 + (mins / 2), 18, 10, 1); // hour hand
-    }
-  } else {
-    drawAnalogBoldHand(hrs*30 + (mins / 2), 18, 10, 1); // hour hand
-  }
+  if (showMinuteHand) drawAnalogBoldHand(mins * 6, 25, 10, 1);
+  if (showHourHand) drawAnalogBoldHand(hrs * 30 + (mins / 2), 18, 10, 1);
+  drawAnalogThinHand(secs * 6, 27, 22);
 
-
-  drawAnalogThinHand(secs*6, 27, 22); // second hand
-
-  // draw the center circle to cover the center part of the hands
+  // Center cap covering hand pivots
   display.fillCircle(DISPLAY_CENTER_X, DISPLAY_CENTER_Y, 3, WHITE);
   display.fillCircle(DISPLAY_CENTER_X, DISPLAY_CENTER_Y, 2, BLACK);
-
 }
 
-void drawAnalogBackground(bool editing) {
+void drawAnalogBackground() {
+  display.drawCircle(DISPLAY_CENTER_X, DISPLAY_CENTER_Y, 28, WHITE);
 
-  float xpos;
-  float ypos;
-  float xpos2;
-  float ypos2;  
-
-  display.drawCircle(DISPLAY_CENTER_X, DISPLAY_CENTER_Y, 28, WHITE); // draw fullscreen circle
-
-  // draw 60 dots (pixels) around the circle, one for every minute/second
-  for (int i=0; i<60; i++) { // draw 60 pixels around the circle
-    xpos = round(DISPLAY_CENTER_X + sin(radians(i * 6)) * 31); // calculate x pos based on angle and radius
-    ypos = round(DISPLAY_CENTER_Y - cos(radians(i * 6)) * 31); // calculate y pos based on angle and radius
-    
-    display.drawPixel(xpos, ypos, WHITE); // draw white pixel on position xpos and ypos
+  // 60 dots around the circle, one per minute/second — LUT-driven
+  for (int i = 0; i < NUM_POINTS; i++) {
+    int xpos = round(DISPLAY_CENTER_X + sinTable[i] * 31);
+    int ypos = round(DISPLAY_CENTER_Y - cosTable[i] * 31);
+    display.drawPixel(xpos, ypos, WHITE);
   }
 
-
-  // drawing big tickmarks
-  for (int i=0; i<12; i++) {
-    if((i % 3) == 0) { // only draw tickmarks for some numbers, leave empty space for 12, 3, 6, and 9
-      xpos = round(DISPLAY_CENTER_X + sin(radians(i * 90)) * 30); // calculate x pos based on angle and radius
-      ypos = round(DISPLAY_CENTER_Y - cos(radians(i * 90)) * 30); // calculate y pos based on angle and radius
-      xpos2 = round(DISPLAY_CENTER_X + sin(radians(i * 90)) * 23); // calculate x pos based on angle and radius
-      ypos2 = round(DISPLAY_CENTER_Y - cos(radians(i * 90)) * 23); // calculate y pos based on angle and radius      
-      display.drawLine(xpos, ypos, xpos2, ypos2, WHITE); // draw a line for a tickmark
-    }
+  // Cardinal tickmarks at 12/3/6/9 (LUT indices 0, 15, 30, 45)
+  const int tickIndices[] = { 0, 15, 30, 45 };
+  for (int i : tickIndices) {
+    int xpos = round(DISPLAY_CENTER_X + sinTable[i] * 30);
+    int ypos = round(DISPLAY_CENTER_Y - cosTable[i] * 30);
+    int xpos2 = round(DISPLAY_CENTER_X + sinTable[i] * 23);
+    int ypos2 = round(DISPLAY_CENTER_Y - cosTable[i] * 23);
+    display.drawLine(xpos, ypos, xpos2, ypos2, WHITE);
   }
-  
-  
-  // Display Numbers
+
+  // Hour numerals
   display.setTextSize(1);
   display.setTextColor(WHITE);
-  display.setCursor(80, 28);
-  display.print("3");
-  display.setCursor(62, 46);
-  display.print("6");
-  display.setCursor(44, 28);
-  display.print("9");
-  display.setCursor(60, 12);
-  display.print("12");
+  display.setCursor(80, 28); display.print("3");
+  display.setCursor(62, 46); display.print("6");
+  display.setCursor(44, 28); display.print("9");
+  display.setCursor(60, 12); display.print("12");
 }
-void drawAnalogThinHand(int hand_angle, int hand_length_long, int hand_legth_short) {
+// Thin hand (second hand) — line from a long-radius tip to a short-radius tail
+// passing through the pivot. `hand_angle` is in degrees, 0 = 12 o'clock.
+void drawAnalogThinHand(int hand_angle, int hand_length_long, int hand_length_short) {
+  float angle_rad = radians(hand_angle);
+  float s = sin(angle_rad);
+  float c = cos(angle_rad);
 
-  float xpos;
-  float ypos;
-  float xpos2;
-  float ypos2;  
+  int xpos = round(DISPLAY_CENTER_X + s * hand_length_long);
+  int ypos = round(DISPLAY_CENTER_Y - c * hand_length_long);
+  int xpos2 = round(DISPLAY_CENTER_X - s * hand_length_short);  // +180° flips sign
+  int ypos2 = round(DISPLAY_CENTER_Y + c * hand_length_short);
 
-  // calculate starting and ending position of the second hand
-  xpos = round(DISPLAY_CENTER_X + sin(radians(hand_angle)) * hand_length_long); // calculate x pos based on angle and radius
-  ypos = round(DISPLAY_CENTER_Y - cos(radians(hand_angle)) * hand_length_long); // calculate y pos based on angle and radius
-  xpos2 = round(DISPLAY_CENTER_X + sin(radians(hand_angle + 180)) * hand_legth_short); // calculate x pos based on angle and radius
-  ypos2 = round(DISPLAY_CENTER_Y - cos(radians(hand_angle + 180)) * hand_legth_short); // calculate y pos based on angle and radius  
-
-  display.drawLine(xpos, ypos, xpos2, ypos2, WHITE); // draw the main line
-  display.fillCircle(xpos2, ypos2, 3, WHITE); // draw small outline white circle
-  display.fillCircle(xpos2, ypos2, 2, BLACK); // draw small filled black circle
-
+  display.drawLine(xpos, ypos, xpos2, ypos2, WHITE);
+  display.fillCircle(xpos2, ypos2, 3, WHITE);
+  display.fillCircle(xpos2, ypos2, 2, BLACK);
 }
 
 
-// draw bold hand = minute hand and hour hand
-void drawAnalogBoldHand(int hand_angle, int hand_length_long, int hand_legth_short, int hand_dot_size) {
+// Bold hand (minute and hour) — filled "lozenge" between two circles
+void drawAnalogBoldHand(int hand_angle, int hand_length_long, int hand_length_short, int hand_dot_size) {
+  float angle_rad = radians(hand_angle);
+  float s = sin(angle_rad);
+  float c = cos(angle_rad);
+  // +90° rotation for the perpendicular offset that gives the lozenge width
+  float s_perp = c;   // sin(angle+90)  =  cos(angle)
+  float c_perp = -s;  // cos(angle+90)  = -sin(angle)
 
-  float xpos;
-  float ypos;
-  float xpos2;
-  float ypos2;  
+  int xpos = round(DISPLAY_CENTER_X + s * hand_length_long);
+  int ypos = round(DISPLAY_CENTER_Y - c * hand_length_long);
+  int xpos2 = round(DISPLAY_CENTER_X + s * hand_length_short);
+  int ypos2 = round(DISPLAY_CENTER_Y - c * hand_length_short);
 
-  float tri_xoff;
-  float tri_yoff;  
+  int tri_xoff = round(s_perp * hand_dot_size);
+  int tri_yoff = round(-c_perp * hand_dot_size);
 
-  // calculate positions of the two circles
-  xpos = round(DISPLAY_CENTER_X + sin(radians(hand_angle)) * hand_length_long); // calculate x pos based on angle and radius
-  ypos = round(DISPLAY_CENTER_Y - cos(radians(hand_angle)) * hand_length_long); // calculate y pos based on angle and radius
-  xpos2 = round(DISPLAY_CENTER_X + sin(radians(hand_angle)) * hand_legth_short); // calculate x pos based on angle and radius
-  ypos2 = round(DISPLAY_CENTER_Y - cos(radians(hand_angle)) * hand_legth_short); // calculate y pos based on angle and radius  
-
-  tri_xoff = round( sin(radians(hand_angle + 90)) * hand_dot_size);
-  tri_yoff = round(-cos(radians(hand_angle + 90)) * hand_dot_size);  
-
-  display.drawLine(DISPLAY_CENTER_X, DISPLAY_CENTER_Y, xpos2, ypos2, WHITE); // draw the line from one circle to the center
-  display.drawCircle(xpos, ypos, hand_dot_size, WHITE); // draw filled white circle
-  display.drawCircle(xpos2, ypos2, hand_dot_size, WHITE); // draw filled white circle
-
+  display.drawLine(DISPLAY_CENTER_X, DISPLAY_CENTER_Y, xpos2, ypos2, WHITE);
+  display.drawCircle(xpos, ypos, hand_dot_size, WHITE);
+  display.drawCircle(xpos2, ypos2, hand_dot_size, WHITE);
 
   display.fillTriangle(xpos + tri_xoff, ypos + tri_yoff,
-                    xpos - tri_xoff, ypos - tri_yoff,
-                    xpos2 + tri_xoff, ypos2 + tri_yoff, WHITE);
+                       xpos - tri_xoff, ypos - tri_yoff,
+                       xpos2 + tri_xoff, ypos2 + tri_yoff, WHITE);
   display.fillTriangle(xpos2 + tri_xoff, ypos2 + tri_yoff,
-                    xpos2 - tri_xoff, ypos2 - tri_yoff,
-                    xpos - tri_xoff, ypos - tri_yoff, WHITE);
-
-
+                       xpos2 - tri_xoff, ypos2 - tri_yoff,
+                       xpos - tri_xoff, ypos - tri_yoff, WHITE);
 }
 
-void displayDigitalClock(bool edit_minute, bool edit_hour) {
-  unsigned long millis = rtc.getMillis();
-  int clockY = 42;
-  digitalClockCanvas.fillScreen(0); 
+// RONIX17 has uneven digit widths — these offsets are hand-tuned per digit so
+// the time looks centered regardless of which digits are present.
+static void drawDigitalHours(int y) {
+  if (hrs > 9) {
+    digitalClockCanvas.setCursor(0, y);
+    digitalClockCanvas.print(hrs / 10);
+  }
+  int ones = hrs % 10;
+  int x = (ones == 1) ? 25 : (ones == 0) ? 12 : 14;
+  digitalClockCanvas.setCursor(x, y);
+  digitalClockCanvas.print(ones);
+}
+
+static void drawDigitalMinutes(int y) {
+  int tens = mins / 10;
+  int ones = mins % 10;
+  int x_tens = (tens == 1) ? 68 : (tens == 0) ? 55 : 56;
+  int x_ones = (ones == 1) ? 93 : 90;
+  digitalClockCanvas.setCursor(x_tens, y);
+  digitalClockCanvas.print(tens);
+  digitalClockCanvas.setCursor(x_ones, y);
+  digitalClockCanvas.print(ones);
+}
+
+void displayDigitalClock(EditState edit) {
+  constexpr int clockY = 42;
+  bool blinkOn = rtc.getMillis() > 500;
+  bool showHours = (edit != EditState::Hour) || blinkOn;
+  bool showMinutes = (edit != EditState::Minute) || blinkOn;
+
+  digitalClockCanvas.fillScreen(0);
   digitalClockCanvas.setFont(&RONIX17);
   digitalClockCanvas.setTextSize(1);
   digitalClockCanvas.setTextWrap(false);
-  if (edit_hour) {
-    if (millis > 500) {
-      if (hrs > 9) {
-        digitalClockCanvas.setCursor(0, clockY);
-        digitalClockCanvas.print(hrs / 10);
-      }
-      if (hrs % 10 == 1) {
-        digitalClockCanvas.setCursor(25, clockY);
-        digitalClockCanvas.print(hrs % 10);
-      } else if (hrs % 10 == 0) {
-        digitalClockCanvas.setCursor(12, clockY);
-        digitalClockCanvas.print(hrs % 10);
-      } else {
-        digitalClockCanvas.setCursor(14, clockY);
-        digitalClockCanvas.print(hrs % 10);
-      }
-    }
-  } else {
-    if (hrs > 9) {
-      digitalClockCanvas.setCursor(0, clockY);
-      digitalClockCanvas.print(hrs / 10);
-    }
-    if (hrs % 10 == 1) {
-      digitalClockCanvas.setCursor(25, clockY);
-      digitalClockCanvas.print(hrs % 10);
-    } else if (hrs % 10 == 0) {
-      digitalClockCanvas.setCursor(12, clockY);
-      digitalClockCanvas.print(hrs % 10);
-    } else {
-      digitalClockCanvas.setCursor(14, clockY);
-      digitalClockCanvas.print(hrs % 10);
-    }
 
-  }
+  if (showHours) drawDigitalHours(clockY);
+  if (showMinutes) drawDigitalMinutes(clockY);
 
-  if (edit_minute) {
-    if (millis > 500) {
-      if (mins / 10 == 1) {
-        digitalClockCanvas.setCursor(68, clockY);
-        digitalClockCanvas.print(mins / 10);
-      } else if (mins / 10 == 0) {
-        digitalClockCanvas.setCursor(55, clockY);
-        digitalClockCanvas.print(mins / 10);
-      } else {
-        digitalClockCanvas.setCursor(56, clockY);
-        digitalClockCanvas.print(mins / 10);
-      }
-      if (mins % 10 == 1) {
-        digitalClockCanvas.setCursor(93, clockY);
-        digitalClockCanvas.print(mins % 10);
-      } else {
-        digitalClockCanvas.setCursor(90, clockY);
-        digitalClockCanvas.print(mins % 10);
-      }
-    }
-  } else {
-    if (mins / 10 == 1) {
-        digitalClockCanvas.setCursor(68, clockY);
-        digitalClockCanvas.print(mins / 10);
-      } else if (mins / 10 == 0) {
-        digitalClockCanvas.setCursor(55, clockY);
-        digitalClockCanvas.print(mins / 10);
-      } else {
-        digitalClockCanvas.setCursor(56, clockY);
-        digitalClockCanvas.print(mins / 10);
-      }
-      if (mins % 10 == 1) {
-        digitalClockCanvas.setCursor(93, clockY);
-        digitalClockCanvas.print(mins % 10);
-      } else {
-        digitalClockCanvas.setCursor(90, clockY);
-        digitalClockCanvas.print(mins % 10);
-      }
-  }
-
+  // Colon — x position depends on which adjacent digits are "1" (narrower)
   int colon_x = 52;
-
-  if ((hrs % 10 == 1) & (mins / 10 != 1)) {
+  if (hrs % 10 == 1 && mins / 10 != 1) {
     colon_x = 50;
   } else if (mins / 10 == 1) {
     colon_x = 54;
   }
 
-  // only show the colon in between every two secs
-  int colon_y1 = 26;
-  int colon_y2 = 36;
-  if (edit_hour | edit_minute) {
-    digitalClockCanvas.fillRect(colon_x, colon_y1, 4, 4, WHITE); // draw filled rectangle
-    digitalClockCanvas.fillRect(colon_x, colon_y2, 4, 4, WHITE); // draw filled rectangle
-  } else {
-    if (secs % 2 == 0) { // the result will be 0 or 1 depending if the value is even or odd
-      digitalClockCanvas.fillRect(colon_x, colon_y1, 4, 4, WHITE); // draw filled rectangle
-      digitalClockCanvas.fillRect(colon_x, colon_y2, 4, 4, WHITE); // draw filled rectangle
-  }
+  // Colon stays solid while editing; otherwise blinks at 1Hz
+  bool showColon = (edit != EditState::None) || (secs % 2 == 0);
+  if (showColon) {
+    digitalClockCanvas.fillRect(colon_x, 26, 4, 4, WHITE);
+    digitalClockCanvas.fillRect(colon_x, 36, 4, 4, WHITE);
   }
 
   display.drawBitmap(0, 0, digitalClockCanvas.getBuffer(), SCREEN_WIDTH, SCREEN_HEIGHT, WHITE, BLACK);
@@ -570,30 +462,34 @@ void initiateTime() {
   secs=rtc.getSecond();
 }
 
-void readButton(unsigned long debounce_time=debounce_time) {
+void readButton() {
   CWFilter.Filter(analogRead(CW_PIN));
   CCWFilter.Filter(analogRead(CCW_PIN));
   PUSHFilter.Filter(analogRead(PUSH_PIN));
 
-  CW_VAL = CWFilter.Current();
-  CCW_VAL = CCWFilter.Current();
-  PUSH_VAL = PUSHFilter.Current();
+  // Edit-mode tweaks the debounce so held knob rotations step at a usable pace
+  unsigned long debounceMs = (editState == EditState::Hour)   ? DEBOUNCE_EDIT_HOUR_MS
+                           : (editState == EditState::Minute) ? DEBOUNCE_EDIT_MINUTE_MS
+                                                              : DEBOUNCE_FACE_MS;
+  unsigned long now = millis();
+  bool ready = (now - lastButtonMs) > debounceMs;
 
-  if (PUSH_VAL == 4095 & ((millis() - lastDebounceTime1) > debounce_time)) {
-    PUSH_STATE = true;
-    lastDebounceTime1 = millis();
-  } else if (CCW_VAL == 4095 & ((millis() - lastDebounceTime1) > debounce_time)) {
-    CCW_STATE = true;
-    lastDebounceTime1 = millis();
-  } else if (CW_VAL == 4095 & ((millis() - lastDebounceTime1) > debounce_time)){
-    CW_STATE = true;
-    lastDebounceTime1 = millis();
-  } else {
-    PUSH_STATE = false;
-    CCW_STATE = false;
-    CW_STATE = false;
+  pushEvent = false;
+  cwEvent = false;
+  ccwEvent = false;
+
+  if (!ready) return;
+
+  if (PUSHFilter.Current() > BUTTON_THRESHOLD) {
+    pushEvent = true;
+    lastButtonMs = now;
+  } else if (CCWFilter.Current() > BUTTON_THRESHOLD) {
+    ccwEvent = true;
+    lastButtonMs = now;
+  } else if (CWFilter.Current() > BUTTON_THRESHOLD) {
+    cwEvent = true;
+    lastButtonMs = now;
   }
-
 }
 
 
