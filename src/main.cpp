@@ -250,16 +250,9 @@ void loop() {
 
 
 void silviaScreen() {
-  // display.clearDisplay(); // Always Clear display buffer
-  // bootCanvas.fillScreen(0);
-  // bootCanvas.drawBitmap(0, 0, SILVIALOGO, 128, 64, WHITE, BLACK);
-  // display.drawBitmap(0, 0, bootCanvas.getBuffer(), SCREEN_WIDTH, SCREEN_HEIGHT, WHITE, BLACK);
-  // display.display();
-  // delay(3000);
-
   for (int i = 0; i < ANIMATEDLOGOARRAY_LEN; i++) {
     display.clearDisplay();
-    if (i >= 34) {
+    if (i >= 38) {
       bootCanvas.drawBitmap(0, 0, ANIMATEDLOGOARRAY[i], 128, 64, WHITE, BLACK);
     } else {
       bootCanvas.drawBitmap(0, 0, ANIMATEDLOGOARRAY_ATKINSON[i], 128, 64, WHITE, BLACK);
