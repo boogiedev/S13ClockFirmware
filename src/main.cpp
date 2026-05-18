@@ -167,7 +167,7 @@ void setup() {
     bootScreen();
     display.clearDisplay();
     display.display();
-    delay(1000);
+    delay(2000);          // pause between Club 187 and silvia transition
     silviaScreen();
     display.clearDisplay();
     display.display();
