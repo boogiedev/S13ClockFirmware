@@ -244,20 +244,41 @@ void silviaScreen() {
     delay(50);
   }
 
-  // Outline first (~400ms), then fill to the full silvia logo held for 3s
+  // Show the outline alone briefly so the eye registers it as a starting frame
   display.clearDisplay();
   bootCanvas.fillScreen(0);
   bootCanvas.drawBitmap(0, 0, S13SILVIAOUTLINE, 128, 64, WHITE, BLACK);
   display.drawBitmap(0, 0, bootCanvas.getBuffer(), SCREEN_WIDTH, SCREEN_HEIGHT, WHITE, BLACK);
   display.display();
-  delay(400);
+  delay(250);
 
-  display.clearDisplay();
-  bootCanvas.fillScreen(0);
-  bootCanvas.drawBitmap(0, 0, SILVIALOGO, 128, 64, WHITE, BLACK);
-  display.drawBitmap(0, 0, bootCanvas.getBuffer(), SCREEN_WIDTH, SCREEN_HEIGHT, WHITE, BLACK);
-  display.display();
-  delay(3000);
+  // Dissolve fade: outline stays visible while SILVIALOGO pixels are revealed
+  // progressively via an ordered dither. Each step adds another slice of the
+  // logo's white pixels based on a per-pixel hash threshold (no native opacity
+  // on a 1-bit OLED, so we fake the fade with pixel coverage).
+  constexpr int FADE_STEPS = 16;
+  constexpr int FADE_STEP_MS = 30;
+  for (int step = 1; step <= FADE_STEPS; step++) {
+    bootCanvas.fillScreen(0);
+    bootCanvas.drawBitmap(0, 0, S13SILVIAOUTLINE, 128, 64, WHITE, BLACK);
+    for (int y = 0; y < 64; y++) {
+      for (int x = 0; x < 128; x++) {
+        uint8_t b = pgm_read_byte(&SILVIALOGO[y * 16 + (x >> 3)]);
+        if (!(b & (0x80 >> (x & 7)))) continue;            // pixel not lit in logo
+        uint8_t threshold = (x * 31 + y * 17) & 0x0f;       // 0..15 pseudo-random
+        if (threshold < step) {
+          bootCanvas.drawPixel(x, y, WHITE);
+        }
+      }
+    }
+    display.clearDisplay();
+    display.drawBitmap(0, 0, bootCanvas.getBuffer(), SCREEN_WIDTH, SCREEN_HEIGHT, WHITE, BLACK);
+    display.display();
+    delay(FADE_STEP_MS);
+  }
+
+  // Hold the fully revealed silvia logo
+  delay(2500);
 }
 
 void bootScreen() {
