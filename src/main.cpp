@@ -92,6 +92,16 @@ constexpr int NUM_POINTS = 60;
 float sinTable[NUM_POINTS];
 float cosTable[NUM_POINTS];
 
+// Standard 4x4 Bayer ordered-dither matrix. Values 0..15 distributed so that
+// stepping a threshold up from 0 to 15 reveals (or hides) pixels in a
+// pleasingly structured grid pattern rather than the noisy look of a hash.
+static const uint8_t BAYER_4x4[4][4] = {
+  { 0,  8,  2, 10 },
+  {12,  4, 14,  6 },
+  { 3, 11,  1,  9 },
+  {15,  7, 13,  5 }
+};
+
 
 // Function Definitions
 void bootScreen();
@@ -249,9 +259,10 @@ void club187Transition() {
   }
   delay(700);
 
-  // Dithered fade-out of the final wordmark frame. Per-pixel hash threshold
-  // (0..15); pixels drawn while threshold >= step, so coverage decreases each
-  // frame until none remain. Same dither math as the outline->logo crossfade.
+  // Dithered fade-out of the final wordmark frame. Per-pixel threshold from a
+  // 4x4 Bayer matrix (0..15); pixels drawn while threshold >= step, so
+  // coverage decreases each frame until none remain. The structured Bayer
+  // pattern gives a tidier dot grid than the hash-based dither used elsewhere.
   const unsigned char* last_frame = ANIMATEDLOGOARRAY[ANIMATEDLOGOARRAY_LEN - 1];
   constexpr int OUT_STEPS = 16;
   constexpr int OUT_STEP_MS = 30;
@@ -264,7 +275,7 @@ void club187Transition() {
         for (int bit = 0; bit < 8; bit++) {
           if (!(b & (0x80 >> bit))) continue;
           int x = (xb << 3) | bit;
-          uint8_t threshold = (x * 31 + y * 17) & 0x0f;
+          uint8_t threshold = BAYER_4x4[y & 3][x & 3];
           if (threshold >= step) {
             bootCanvas.drawPixel(x, y, WHITE);
           }
