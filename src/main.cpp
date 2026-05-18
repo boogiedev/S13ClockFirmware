@@ -225,12 +225,20 @@ void loop() {
 
 
 void silviaScreen() {
-  // Animated buildup of the wordmark (~2.5s). Frames in ANIMATEDLOGOARRAY only
-  // cover rows 28-36 (a thin text strip), so finishing on the last frame alone
-  // is invisible at boot — we follow it with the full SILVIALOGO hold.
+  // Animated transition (~2.5s) into the silvia logo:
+  //   frames 0-37 use the atkinson-dithered array — sparse dots that fill in
+  //     gradually, giving a smooth "wipe" feel out of the Club 187 boot screen
+  //   frames 38-50 use the clean ANIMATEDLOGOARRAY — wordmark resolves out
+  //     of the dither
+  // The ANIMATEDLOGOARRAY frames only cover rows 28-36 (a thin wordmark), so
+  // we follow the transition with the full SILVIALOGO held for 3s.
   for (int i = 0; i < ANIMATEDLOGOARRAY_LEN; i++) {
     display.clearDisplay();
-    bootCanvas.drawBitmap(0, 0, ANIMATEDLOGOARRAY[i], 128, 64, WHITE, BLACK);
+    if (i >= 38) {
+      bootCanvas.drawBitmap(0, 0, ANIMATEDLOGOARRAY[i], 128, 64, WHITE, BLACK);
+    } else {
+      bootCanvas.drawBitmap(0, 0, ANIMATEDLOGOARRAY_ATKINSON[i], 128, 64, WHITE, BLACK);
+    }
     display.drawBitmap(0, 0, bootCanvas.getBuffer(), SCREEN_WIDTH, SCREEN_HEIGHT, WHITE, BLACK);
     display.display();
     delay(50);
