@@ -49,9 +49,12 @@ constexpr int CW_PIN = 33;
 constexpr int CCW_PIN = 32;
 constexpr int PUSH_PIN = 34;
 
-// Filtered ADC threshold for a press (raw range is 0..4095; filter asymptotes,
-// so exact-equality compares are flaky — use a wide margin).
-constexpr int BUTTON_THRESHOLD = 3500;
+// Filtered ADC value that signals a press. The switchgear pulls the pin to
+// full 4095 when pressed; the exponential filter only reaches saturation after
+// a sustained read, which gives us de-facto debounce on top of the time-based
+// one below. A lower threshold here causes spurious face-switches from noise
+// or partial encoder positions.
+constexpr int BUTTON_PRESSED_VAL = 4095;
 
 // Debounce windows by mode
 constexpr unsigned long DEBOUNCE_FACE_MS = 150;
@@ -228,17 +231,11 @@ void loop() {
 
 
 void silviaScreen() {
-  for (int i = 0; i < ANIMATEDLOGOARRAY_LEN; i++) {
-    display.clearDisplay();
-    if (i >= 38) {
-      bootCanvas.drawBitmap(0, 0, ANIMATEDLOGOARRAY[i], 128, 64, WHITE, BLACK);
-    } else {
-      bootCanvas.drawBitmap(0, 0, ANIMATEDLOGOARRAY_ATKINSON[i], 128, 64, WHITE, BLACK);
-    }
-    display.drawBitmap(0, 0, bootCanvas.getBuffer(), SCREEN_WIDTH, SCREEN_HEIGHT, WHITE, BLACK);
-    display.display();
-    delay(50);
-  }
+  display.clearDisplay();
+  bootCanvas.fillScreen(0);
+  bootCanvas.drawBitmap(0, 0, SILVIALOGO, 128, 64, WHITE, BLACK);
+  display.drawBitmap(0, 0, bootCanvas.getBuffer(), SCREEN_WIDTH, SCREEN_HEIGHT, WHITE, BLACK);
+  display.display();
   delay(3000);
 }
 
@@ -480,13 +477,13 @@ void readButton() {
 
   if (!ready) return;
 
-  if (PUSHFilter.Current() > BUTTON_THRESHOLD) {
+  if (PUSHFilter.Current() == BUTTON_PRESSED_VAL) {
     pushEvent = true;
     lastButtonMs = now;
-  } else if (CCWFilter.Current() > BUTTON_THRESHOLD) {
+  } else if (CCWFilter.Current() == BUTTON_PRESSED_VAL) {
     ccwEvent = true;
     lastButtonMs = now;
-  } else if (CWFilter.Current() > BUTTON_THRESHOLD) {
+  } else if (CWFilter.Current() == BUTTON_PRESSED_VAL) {
     cwEvent = true;
     lastButtonMs = now;
   }
